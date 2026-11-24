@@ -1,0 +1,220 @@
+"""
+PROGRAM 8: Proving a query using Resolution in Propositional Logic
+"""
+
+from itertools import combinations
+
+
+# ---------------- Parsing and CNF conversion ----------------
+# Syntax: ~ (NOT)   ^ (AND)   v (OR)   -> (IMPLIES)   <-> (IFF)
+
+def tokenize(s):
+    s = s.replace("<->", " <-> ").replace("->", " -> ")
+    for ch in "()~^":
+        s = s.replace(ch, f" {ch} ")
+    return s.split()
+
+
+class Parser:
+    def __init__(self, tokens):
+        self.t, self.i = tokens, 0
+
+    def peek(self):
+        return self.t[self.i] if self.i < len(self.t) else None
+
+    def eat(self):
+        tok = self.t[self.i]
+        self.i += 1
+        return tok
+
+    def parse(self):
+        node = self.iff()
+        if self.peek() is not None:
+            raise ValueError("Unexpected token: " + self.peek())
+        return node
+
+    def iff(self):
+        left = self.implies()
+        while self.peek() == "<->":
+            self.eat()
+            left = ("iff", left, self.implies())
+        return left
+
+    def implies(self):
+        left = self.or_()
+        if self.peek() == "->":
+            self.eat()
+            return ("imp", left, self.implies())
+        return left
+
+    def or_(self):
+        left = self.and_()
+        while self.peek() == "v":
+            self.eat()
+            left = ("or", left, self.and_())
+        return left
+
+    def and_(self):
+        left = self.not_()
+        while self.peek() == "^":
+            self.eat()
+            left = ("and", left, self.not_())
+        return left
+
+    def not_(self):
+        if self.peek() == "~":
+            self.eat()
+            return ("not", self.not_())
+        return self.atom()
+
+    def atom(self):
+        tok = self.eat()
+        if tok == "(":
+            node = self.iff()
+            if self.eat() != ")":
+                raise ValueError("Missing )")
+            return node
+        return ("sym", tok)
+
+
+def eliminate_iff_imp(f):
+    op = f[0]
+    if op == "sym":
+        return f
+    if op == "not":
+        return ("not", eliminate_iff_imp(f[1]))
+    a, b = eliminate_iff_imp(f[1]), eliminate_iff_imp(f[2])
+    if op == "imp":
+        return ("or", ("not", a), b)
+    if op == "iff":
+        return ("and", ("or", ("not", a), b), ("or", ("not", b), a))
+    return (op, a, b)
+
+
+def push_negation(f):
+    op = f[0]
+    if op == "sym":
+        return f
+    if op == "not":
+        g = f[1]
+        if g[0] == "sym":
+            return f
+        if g[0] == "not":
+            return push_negation(g[1])
+        if g[0] == "and":
+            return ("or", push_negation(("not", g[1])), push_negation(("not", g[2])))
+        if g[0] == "or":
+            return ("and", push_negation(("not", g[1])), push_negation(("not", g[2])))
+    return (op, push_negation(f[1]), push_negation(f[2]))
+
+
+def distribute(f):
+    if f[0] in ("sym", "not"):
+        return f
+    a, b = distribute(f[1]), distribute(f[2])
+    if f[0] == "or":
+        if a[0] == "and":
+            return ("and", distribute(("or", a[1], b)), distribute(("or", a[2], b)))
+        if b[0] == "and":
+            return ("and", distribute(("or", a, b[1])), distribute(("or", a, b[2])))
+    return (f[0], a, b)
+
+
+def collect_literals(f):
+    if f[0] == "or":
+        return collect_literals(f[1]) + collect_literals(f[2])
+    if f[0] == "not":
+        return ["~" + f[1][1]]
+    return [f[1]]
+
+
+def collect_clauses(f):
+    if f[0] == "and":
+        return collect_clauses(f[1]) + collect_clauses(f[2])
+    return [frozenset(collect_literals(f))]
+
+
+def negate(lit):
+    return lit[1:] if lit.startswith("~") else "~" + lit
+
+
+def is_tautology(clause):
+    return any(negate(l) in clause for l in clause)
+
+
+def to_cnf(sentence):
+    tree = Parser(tokenize(sentence)).parse()
+    tree = distribute(push_negation(eliminate_iff_imp(tree)))
+    return [c for c in collect_clauses(tree) if not is_tautology(c)]
+
+
+# ---------------- Resolution ----------------
+def resolve(c1, c2):
+    resolvents = set()
+    for lit in c1:
+        if negate(lit) in c2:
+            r = (c1 - {lit}) | (c2 - {negate(lit)})
+            if not is_tautology(r):
+                resolvents.add(frozenset(r))
+    return resolvents
+
+
+def resolution_prove(kb, query):
+    """Returns (result, initial clause list including negated query)."""
+    clauses = []
+    for stmt in kb:
+        for c in to_cnf(stmt):
+            if c not in clauses:
+                clauses.append(c)
+    for c in to_cnf("~(" + query + ")"):
+        if c not in clauses:
+            clauses.append(c)
+
+    initial = list(clauses)
+    known = set(clauses)
+    while True:
+        new_clauses = []
+        for ci, cj in combinations(clauses, 2):
+            for r in resolve(ci, cj):
+                if not r:
+                    return "PROVED", initial
+                if r not in known and r not in new_clauses:
+                    new_clauses.append(r)
+        if not new_clauses:
+            return "NOT PROVED", initial
+        clauses.extend(new_clauses)
+        known.update(new_clauses)
+
+
+# ---------------- Display helpers ----------------
+def pretty(s):
+    return s.replace("<->", "↔").replace("->", "→").replace("~", "¬").replace(" v ", " ∨ ")
+
+
+def fmt_clause(c):
+    lits = sorted(c, key=lambda x: (x.lstrip("~"), x))
+    text = " ∨ ".join(pretty(l) for l in lits)
+    return f"({text})" if len(lits) > 1 else text
+
+
+# ---------------- Main ----------------
+if __name__ == "__main__":
+    tests = [
+        ("Main Program: Rain Example", ["R -> W", "W -> G", "R"], "G"),
+        ("Test Case 1: Direct Fact", ["P"], "P"),
+        ("Test Case 2: One Implication", ["P -> Q", "P"], "Q"),
+        ("Test Case 3: Chain of Implications", ["P -> Q", "Q -> R", "P"], "R"),
+        ("Test Case 4: Disjunctive Knowledge", ["P v Q", "~P"], "Q"),
+        ("Test Case 5: Query Not Entailed", ["P -> Q"], "P"),
+    ]
+
+    for name, kb, query in tests:
+        result, clauses = resolution_prove(kb, query)
+        print(name)
+        print("Input:")
+        print("KB: {" + ", ".join(pretty(s) for s in kb) + "}")
+        print("Query:", pretty(query))
+        print("Output:")
+        print(result)
+        print("Clauses:", ", ".join(fmt_clause(c) for c in clauses))
+        print()
