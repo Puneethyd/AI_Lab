@@ -1,0 +1,113 @@
+
+from itertools import product
+
+def evaluate(expr, assignment):
+    if isinstance(expr, str):                       # propositional symbol
+        return assignment[expr]
+
+    op = expr[0]
+    if op == 'not':
+        return not evaluate(expr[1], assignment)
+    if op == 'and':
+        return evaluate(expr[1], assignment) and evaluate(expr[2], assignment)
+    if op == 'or':
+        return evaluate(expr[1], assignment) or evaluate(expr[2], assignment)
+    if op == 'implies':
+        return (not evaluate(expr[1], assignment)) or evaluate(expr[2], assignment)
+    if op == 'iff':
+        return evaluate(expr[1], assignment) == evaluate(expr[2], assignment)
+    raise ValueError(f"Unknown operator: {op}")
+
+
+def extract_symbols(expr):
+    if isinstance(expr, str):
+        return {expr}
+    symbols = set()
+    for part in expr[1:]:
+        symbols |= extract_symbols(part)
+    return symbols
+
+def generate_assignments(symbols):
+    for values in product([True, False], repeat=len(symbols)):
+        yield dict(zip(symbols, values))
+
+def to_string(expr):
+    if isinstance(expr, str):
+        return expr
+    op = expr[0]
+    if op == 'not':
+        return f"¬{to_string(expr[1])}"
+    sym = {'and': '∧', 'or': '∨', 'implies': '→', 'iff': '↔'}[op]
+    return f"({to_string(expr[1])} {sym} {to_string(expr[2])})"
+
+
+def tf(v):
+    return 'T' if v else 'F'
+
+def check_entailment(kb, query, show_table=False):
+   
+    all_symbols = set()
+    for s in kb:
+        all_symbols |= extract_symbols(s)
+    all_symbols |= extract_symbols(query)
+    symbols = sorted(all_symbols)
+
+    if show_table:
+        header = "  ".join(symbols) + "   " + \
+                 "   ".join(to_string(s) for s in kb) + "   KB    Query"
+        print(header)
+
+    counterexample = None
+    for assignment in generate_assignments(symbols):
+        kb_value = all(evaluate(s, assignment) for s in kb)
+        q_value = evaluate(query, assignment)
+
+        if show_table:
+            row = "  ".join(tf(assignment[s]) for s in symbols) + "   " + \
+                  "   ".join(tf(evaluate(s, assignment)) for s in kb) + \
+                  f"   {tf(kb_value)}     {tf(q_value)}"
+            print(row)
+
+        if kb_value and not q_value and counterexample is None:
+            counterexample = assignment          # first counterexample found
+
+    if counterexample is not None:
+        print("NOT ENTAILED")
+        print("Counterexample:",
+              ", ".join(f"{k} = {tf(v)}" for k, v in counterexample.items()))
+        return False
+
+    print("ENTAILED")
+    return True
+
+
+if __name__ == "__main__":
+   
+    print("=" * 60)
+    print("Main Example")
+    print("KB   : {R → W, R}")
+    print("Query: W")
+    print("=" * 60)
+    KB = [('implies', 'R', 'W'), 'R']
+    check_entailment(KB, 'W', show_table=True)
+
+    # ---- Test cases ----
+    test_cases = [
+        ("Test Case 1: Query directly given as a fact",
+         ['P'], 'P', "{P}", "P"),
+        ("Test Case 2: Query follows from an implication",
+         [('implies', 'P', 'Q'), 'P'], 'Q', "{P → Q, P}", "Q"),
+        ("Test Case 3: Query not entailed",
+         [('or', 'P', 'Q')], 'P', "{P ∨ Q}", "P"),
+        ("Test Case 4: Query follows from a conjunction",
+         [('and', 'P', 'Q')], 'Q', "{P ∧ Q}", "Q"),
+        ("Test Case 5: Query not entailed by an implication alone",
+         [('implies', 'P', 'Q')], 'P', "{P → Q}", "P"),
+    ]
+
+    for title, kb, query, kb_str, q_str in test_cases:
+        print("\n" + "-" * 60)
+        print(title)
+        print(f"KB   : {kb_str}")
+        print(f"Query: {q_str}")
+        check_entailment(kb, query)
