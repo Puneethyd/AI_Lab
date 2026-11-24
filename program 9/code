@@ -1,0 +1,160 @@
+"""
+WEEK 9: Implementing Unification in First-Order Logic
+"""
+
+import re
+
+# ---------------------------------------------------------------
+# Naming convention:
+#   Variables  : u, v, w, x, y, z (optionally followed by digits, e.g. x1)
+#   Everything else (a, b, John, Mary, f, g, P, Knows, Loves ...)
+#   is a constant, function name or predicate name.
+# ---------------------------------------------------------------
+
+
+# ---------------- Parsing ----------------
+def tokenize(s):
+    return re.findall(r"[A-Za-z0-9_']+|[(),]", s)
+
+
+def parse_term(tokens, i=0):
+    """Returns (term, next_index).
+    A term is either a string (variable/constant) or a tuple (name, [args])."""
+    name = tokens[i]
+    i += 1
+    if i < len(tokens) and tokens[i] == "(":
+        i += 1
+        args = []
+        while True:
+            arg, i = parse_term(tokens, i)
+            args.append(arg)
+            if tokens[i] == ",":
+                i += 1
+            elif tokens[i] == ")":
+                i += 1
+                break
+            else:
+                raise ValueError("Bad expression")
+        return (name, args), i
+    return name, i
+
+
+def parse(s):
+    term, _ = parse_term(tokenize(s))
+    return term
+
+
+def to_str(t):
+    if isinstance(t, str):
+        return t
+    return t[0] + "(" + ", ".join(to_str(a) for a in t[1]) + ")"
+
+
+# ---------------- Helper functions ----------------
+def is_variable(t):
+    return isinstance(t, str) and re.fullmatch(r"[uvwxyz]\d*", t) is not None
+
+
+def apply_subst(t, theta):
+    """Replace variables using theta, repeating until nothing changes."""
+    if isinstance(t, str):
+        if is_variable(t) and t in theta:
+            return apply_subst(theta[t], theta)
+        return t
+    return (t[0], [apply_subst(a, theta) for a in t[1]])
+
+
+def occurs(var, t):
+    if var == t:
+        return True
+    if isinstance(t, str):
+        return False
+    return any(occurs(var, a) for a in t[1])
+
+
+# ---------------- Unification ----------------
+def unify(expr1, expr2):
+    """Returns the MGU (dict) or None on failure."""
+    theta = {}
+    equations = [(expr1, expr2)]
+
+    while equations:
+        s, t = equations.pop(0)
+        s = apply_subst(s, theta)
+        t = apply_subst(t, theta)
+
+        if s == t:
+            continue
+        elif is_variable(s):
+            if occurs(s, t):
+                return None                      # occurs-check failure
+            theta = {k: apply_subst(v, {s: t}) for k, v in theta.items()}
+            theta[s] = t
+        elif is_variable(t):
+            if occurs(t, s):
+                return None                      # occurs-check failure
+            theta = {k: apply_subst(v, {t: s}) for k, v in theta.items()}
+            theta[t] = s
+        elif isinstance(s, str) and isinstance(t, str):
+            return None                          # two different constants
+        elif (isinstance(s, tuple) and isinstance(t, tuple)
+              and s[0] == t[0] and len(s[1]) == len(t[1])):
+            equations = list(zip(s[1], t[1])) + equations
+        else:
+            return None                          # name/arity mismatch
+    return theta
+
+
+def fmt_theta(theta):
+    return "{" + ", ".join(f"{k} / {to_str(v)}" for k, v in theta.items()) + "}"
+
+
+# ---------------- Main ----------------
+if __name__ == "__main__":
+    tests = [
+        ("Test Case 1: Successful Unification with Two Variables",
+         "P(x, a)", "P(b, y)"),
+        ("Test Case 2: Successful Unification with Predicate Arguments",
+         "Knows(John, x)", "Knows(y, Mary)"),
+        ("Test Case 3: Successful Unification with Compound Terms",
+         "f(x, g(a))", "f(g(y), g(a))"),
+        ("Test Case 4: Failure Due to Inconsistent Variable Substitution",
+         "Loves(x, x)", "Loves(John, Mary)"),
+        ("Test Case 5: Failure Due to Occurs Check",
+         "x", "f(x)"),
+    ]
+
+    for name, e1, e2 in tests:
+        print(name)
+        print("Input:")
+        print("Expression 1:", e1)
+        print("Expression 2:", e2)
+        print("Output:")
+        theta = unify(parse(e1), parse(e2))
+        if theta is None:
+            print("Result: FAILURE.")
+        else:
+            print("MGU: θ =", fmt_theta(theta))
+            unbound = sorted({v for v in re.findall(r"[A-Za-z0-9_']+", e1 + " " + e2)
+                              if is_variable(v) and v not in theta
+                              and not any(occurs(v, b) for b in theta.values())} )
+            note = ""
+            if unbound and any(occurs(u, b) for b in theta.values() for u in unbound):
+                pass
+            print("Result: Unification successful.")
+        print()
+
+    # Optional interactive mode
+    print("=" * 50)
+    print("Interactive mode (press Enter to quit)")
+    while True:
+        a = input("Expression 1: ").strip()
+        if not a:
+            break
+        b = input("Expression 2: ").strip()
+        theta = unify(parse(a), parse(b))
+        if theta is None:
+            print("Result: FAILURE.\n")
+        else:
+            print("MGU: θ =", fmt_theta(theta))
+            print("Result: Unification successful.\n")
